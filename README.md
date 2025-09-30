@@ -173,7 +173,9 @@ If you use CCM in your research, please cite:
 
 ## 👤 Author
 Current version author: Yuchen Zhou
+
 Second version author: Shijie Xu, Shenghui Zhong
+
 First version author: Mehdi Jangi
 
 
