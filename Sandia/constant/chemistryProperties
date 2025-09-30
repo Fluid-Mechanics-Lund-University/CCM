@@ -1,0 +1,80 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  7
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version         2;
+    format          ascii;
+    class           dictionary;
+    location        "constant";
+    object          chemistryProperties;
+}
+
+
+chemistryType
+{
+    solver          ode;
+    method          CCM;//clean; // chemistryModel (standard in OpenFOAM 7)
+}
+
+chemistry       on;
+
+initialChemicalTimeStep 1e-7;
+
+odeCoeffs
+{
+    solver          seulex;
+    absTol          1e-08;
+    relTol          0.1;
+}
+
+
+
+CCM
+{
+//================= New CCM settings =====================//
+    // You can select whatever number of PVs
+    // as you like!
+    principalVars ("T" "CH3OH" "HO2" "H2O2" "CH4" "CH2OH" "C" "CH2" "HCO" "HCCO" "OH" "O" "CH3O");
+
+    nSlice                50;
+    ignoreMin            1e-6;
+
+    // Timing analysis switch
+    debugTime            true;  // true: enable detailed timing analysis for the 9 major steps
+
+    // Communication optimization
+    optimizedCommunication true;  // true: use targeted distribution, false: use broadcast
+
+    // Error Control Variables (ecVars) mode
+    ecMode
+    {
+        enabled         true;          // Enable EC mode
+        // tolerance automatically calculated as 1.0/nSlice
+        numECVarsToAdd   3;            // Conservative: add 3 variables per iteration
+        numECVarsToRemove 1;           // Aggressive: remove 5 variables per iteration
+        updateFreq      5;             // Check every 5 steps
+    }
+
+    ratioOxygenToCarbonElementInFuel 0;
+    // if more than 256/512/1024 cores, try distributed and set the localCores to be 128
+    communicator
+    {
+        mode           global; // global, distributed
+        localCores     6;
+    }
+
+    pvInfo
+    {
+        
+    }
+
+}
+
+#include "reactions";
+
+// ************************************************************************* //
