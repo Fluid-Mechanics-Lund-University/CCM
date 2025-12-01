@@ -73,6 +73,20 @@ Our load balancing algorithms are specifically designed for the CCM method, work
    }
    ```
 
+   **Configure CCM dictionary** in `<case>/constant/chemistryProperties`:
+   In most cases, a simple minimum setting is quite enough. With that, you automatically enjoy **Error Control** and consider **all species**, **T**, and **p** (if needed).
+   ```cpp
+   CCM
+   {
+      // Initialization mode (manual or default)
+      mode                 manual;  // Test default mode: auto-populate all species + T
+      nSlice                50;
+      ignoreMin            1e-6;
+   }
+   ```   
+
+   More customized settings are also possible, please check the test case for details!
+
 2. **Run your simulation**:
 
    ```bash

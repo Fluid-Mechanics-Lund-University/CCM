@@ -332,6 +332,13 @@ class CCMchemistryModel
         label ecUpdateFreq_;
         label currentStep_;
         bool ecInitialized_;
+
+        //- Initialization mode: manual or default
+        word initMode_;
+
+        //- Flag to treat pressure variations in high Mach cases
+        Switch highMach_;
+
         //- Pre-allocated hash tables for performance optimization
         //  These are sized in constructor and cleared before each use
         

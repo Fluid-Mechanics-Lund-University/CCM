@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "ParallelComm.C": "cpp",
+        "CCMchemistryModel.C": "cpp",
+        "CCMUtilities.C": "cpp"
+    }
+}

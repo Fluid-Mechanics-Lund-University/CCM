@@ -87,7 +87,7 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
         )
     ),
     tabulation_(*tabulationPtr_),
-    fuelOtoC_(readScalar(this->subDict("CCM").lookup("ratioOxygenToCarbonElementInFuel"))),
+    fuelOtoC_(this->subDict("CCM").template lookupOrDefault<scalar>("ratioOxygenToCarbonElementInFuel", 0.0)),
     JhCoeff_(scalarList(nSpecie_, 0.)),
     JcCoeff_(scalarList(nSpecie_, 0.)),
     JnCoeff_(scalarList(nSpecie_, 0.)),
@@ -100,7 +100,7 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
     ccmDebug_(nullptr),
     parallelComm_(nullptr),
     combustionHelpers_(nullptr),
-    principalVars_(CCMdict_.lookup<hashedWordList>("principalVars")),
+    principalVars_(CCMdict_.lookupOrDefault<hashedWordList>("principalVars", hashedWordList())),
     speciesPrincipalVars_(wordList()),
     regularVars_(wordList()),
     updateVars_(wordList()),
@@ -277,7 +277,7 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
     optimizedCommunication_(CCMdict_.lookupOrDefault<Switch>("optimizedCommunication", true)),
     Ydiff_(nSpecie_),
     Ymax_(nSpecie_),
-    debugTime_(CCMdict_.lookupOrDefault<Switch>("debugTime", false)),
+    debugTime_(CCMdict_.lookupOrDefault<Switch>("debugTime", true)),
     zoneIndex_(mesh().nCells()),
     zoneRemainder_(mesh().nCells()),
     gatheredReactionEntries_(0),
@@ -287,18 +287,56 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
     currentStepIndex_(0),
     groupingTimer_(),
     groupingTime_(0.0),
-    ecEnabled_(CCMdict_.found("ecMode") ? Switch(CCMdict_.subDict("ecMode").lookupOrDefault<bool>("enabled", false)) : Switch(false)),
-    numECVarsToAdd_(CCMdict_.found("ecMode") ? CCMdict_.subDict("ecMode").lookupOrDefault<label>("numECVarsToAdd", 3) : 3),
-    numECVarsToRemove_(CCMdict_.found("ecMode") ? CCMdict_.subDict("ecMode").lookupOrDefault<label>("numECVarsToRemove", 3) : 3),
-    ecUpdateFreq_(CCMdict_.found("ecMode") ? CCMdict_.subDict("ecMode").lookupOrDefault<label>("updateFreq", 10) : 10),
+    ecEnabled_(CCMdict_.subOrEmptyDict("ecMode").lookupOrDefault<Switch>("enabled", true)),
+    numECVarsToAdd_(CCMdict_.subOrEmptyDict("ecMode").lookupOrDefault<label>("numECVarsToAdd", 3)),
+    numECVarsToRemove_(CCMdict_.subOrEmptyDict("ecMode").lookupOrDefault<label>("numECVarsToRemove", 1)),
+    ecUpdateFreq_(CCMdict_.subOrEmptyDict("ecMode").lookupOrDefault<label>("updateFreq", 10)),
     currentStep_(0),
     ecInitialized_(false),
+    initMode_(CCMdict_.lookupOrDefault<word>("mode", "default")),
+    highMach_(CCMdict_.lookupOrDefault<Switch>("highMach", true)),
     preAllocatedToCore_(),
     preAllocatedFromCore_(),
     preAllocatedLocalRREntries_(),
     preAllocatedReturnToCore_(),
     preAllocatedReceivedRREntries_()
 {
+    // Auto-populate principalVars in default mode
+    if (initMode_ == "default")
+    {
+        Info << "CCM initialization mode: default (auto-populating all species + T) and EC mode turning on" << endl;
+        Info << "Note that in this mode, phi, chi and J will be ignored" << endl;
+
+        // Force to have EC mode enabled
+        ecEnabled_ = true;
+
+        // Clear and rebuild principalVars with all species + T
+        principalVars_.clear();
+
+        // Add temperature first
+        principalVars_.append("T");
+
+        // Add all species from mixture
+        // *** OF-13 SPECIFIC: Use thermo.species() ***
+        forAll(thermo.species(), i)
+        {
+            principalVars_.append(thermo.species()[i]);
+        }
+
+        Info << "Auto-populated principalVars (" << principalVars_.size()
+             << " variables): T + " << thermo.species().size() << " species" << endl;
+    }
+    else
+    {
+        Info << "CCM initialization mode: manual (using configured principalVars)" << endl;
+        if (principalVars_.size() == 0)
+        {
+            FatalErrorIn("CCMChemistryModel::CCMChemistryModel")
+                << "No principalVars specified in CCM dictionary"
+                << abort(FatalError);
+        }
+    }
+
     // Pre-allocate hash tables with double the principalVars size for efficiency
     pvMin_.resize(2 * principalVars_.size());
     pvMax_.resize(2 * principalVars_.size());
@@ -360,6 +398,11 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
     else
     {
         Info << "Using original broadcast communication pattern" << endl;
+    }
+
+    if (highMach_)
+    {
+        Info << "Treating pressure variations in high Mach cases" << endl;
     }
 
 
@@ -589,7 +632,7 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
     // Create communicator
     if (Pstream::parRun())
     {
-        string mode = CCMdict_.subDict("communicator").lookupOrDefault<word>("mode", "global");
+        string mode = CCMdict_.subOrEmptyDict("communicator").lookupOrDefault<word>("mode", "global");
         if (mode == "global")
         {
             Info << "Global communicator" << endl;
@@ -598,7 +641,7 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
         else if (mode == "distributed")
         {
             Info << "Distributed communicator" << endl;
-            label localCores = CCMdict_.subDict("communicator").lookupOrDefault<label>("localCores", 2);
+            label localCores = CCMdict_.subOrEmptyDict("communicator").lookupOrDefault<label>("localCores", 512);
             if (localCores < 2)
             {
                 FatalErrorIn("CCMchemistryModel::CCMchemistryModel")
@@ -608,6 +651,12 @@ Foam::CCMchemistryModel<ThermoType>::CCMchemistryModel
             
             Info << "localCores: " << localCores << endl;
             RoundRobinCommunicator_ = RoundRobin(Pstream::nProcs(), localCores);
+        }
+        else
+        {
+            FatalErrorIn("CCMchemistryModel::CCMchemistryModel")
+            << "Unknown communicator mode: " << mode
+            << abort(FatalError);
         }
         
     }
@@ -1767,6 +1816,31 @@ Foam::CCMchemistryModel<ThermoType>::distributeReactionEntry(
     //----------end add for new CCM--------//
     CCM_TIMING_END(Initialization, debugTime_, stepTimer_, *this);
 
+    // logP encoding setup: calculate log(P) min/max/span if enabled
+    scalar pMin = -1, pMax = -1, pSpan = -1;
+    bool useLogPOnThisRun = true;
+    if (highMach_)
+    {
+        // Calculate log(P) range over all cells
+        pMax = gMax(p0vf);
+        pMin = max(gMin(p0vf),1);// 1 Pa minimum to avoid log(0)
+
+        Info << nl << "High Mach Pressure: [" << pMin << ", " << pMax << "] Pa, ratio=" << pMax/pMin;
+
+        if (pMax/pMin < 1.1)
+        {
+            useLogPOnThisRun = false;
+            Info << "pMax = " << pMax << ", pMin = " << pMin << ", ratio < 1.1, log(P) encoding disabled" << nl;
+        }
+        else
+        {
+            Info << "log(P) encoding enabled" << nl;
+            pMax = Foam::log(pMax);
+            pMin = Foam::log(pMin);
+            pSpan = (pMax - pMin) / nSlice_;
+        }
+    }
+
     // Step 2: Cell Grouping & Zone Calculation
     CCM_TIMING_START(Cell_Grouping, debugTime_, stepTimer_);
     groupingTime_ = 0.0;
@@ -1794,7 +1868,18 @@ Foam::CCMchemistryModel<ThermoType>::distributeReactionEntry(
             label pos = min(max(floor((value-encodingMin[vi])/encodingSpan[vi]),0),maxiRepresentation_);
             cellZoneIndex += parallelComm_().toBase256Word(pos);
         }
-        
+
+        // Add logarithmic pressure suffix if enabled
+        string encodedP = "";
+        if (useLogPOnThisRun)
+        {
+            scalar logP = Foam::log(max(p, 1.0));  // Avoid log(0) by clamping to 1 Pa minimum
+            label posP = min(max(floor((logP - pMin) / pSpan), 0), maxiRepresentation_);
+            string encodedP = parallelComm_().toBase256Word(posP);
+            cellZoneIndex += encodedP;
+        }
+        cellZoneIndex += encodedP;
+
         //= replace this part
         zoneIndex_[celli] = cellZoneIndex;
         //label remainder = blockWiseRemainder(cellZoneIndex, contactNum);

@@ -210,7 +210,7 @@ void Foam::CCMUtilities<ThermoType>::initPvLists()
 template<class ThermoType>
 void Foam::CCMUtilities<ThermoType>::initRegularVars()
 {
-    dictionary pvDict(CCMdict_.subDict("pvInfo"));
+    dictionary pvDict(CCMdict_.subOrEmptyDict("pvInfo"));
     List<Foam::keyType> keys = pvDict.keys();
     regularVars_.clear();
 
@@ -226,18 +226,17 @@ void Foam::CCMUtilities<ThermoType>::initJCoeffs()
 {
     label H2Oindex(-1);
     label CO2index(-1);
-    forAll(mixture_.specieNames(), i)
+
+    hashedWordList speciesNames(mixture_.specieNames());
+    if (speciesNames.found("H2O"))
     {
-        if (specieThermos_[i].name() == "H2O")
-        {
-            H2Oindex = i;
-        }
-        if (specieThermos_[i].name() == "CO2")
-        {
-            CO2index = i;
-        }
+        H2Oindex = speciesNames["H2O"];
     }
-    
+    if (speciesNames.found("CO2"))
+    {
+        CO2index = speciesNames["CO2"];
+    }
+
     // Initialize JcCoeff_, JnCoeff_, JoCoeff_, JhCoeff_
     const scalar MWh = atomicWeights["H"];
     const scalar MWc = atomicWeights["C"];
@@ -270,41 +269,22 @@ void Foam::CCMUtilities<ThermoType>::initJCoeffs()
     }
 
     // Initialize modified J coefficients
-    forAll(JhCoeff_, i)
+    Jh_h2oCoeff_ = JhCoeff_;
+    Jc_co2Coeff_ = JcCoeff_;
+    Jo_co2_h2oCoeff_ = JoCoeff_;
+
+    if (H2Oindex != -1)
     {
-        if (i == H2Oindex)
-        {
-            Jh_h2oCoeff_[i] = 0.0;
-        }
-        else
-        {
-            Jh_h2oCoeff_[i] = JhCoeff_[i];
-        }
+        Jh_h2oCoeff_[H2Oindex] = 0.0;
+        Jo_co2_h2oCoeff_[H2Oindex] = 0.0;
     }
 
-    forAll(JcCoeff_, i)
+    if (CO2index != -1)
     {
-        if (i == CO2index)
-        {
-            Jc_co2Coeff_[i] = 0.0;
-        }
-        else
-        {
-            Jc_co2Coeff_[i] = JcCoeff_[i];
-        }
+        Jc_co2Coeff_[CO2index] = 0.0;
+        Jo_co2_h2oCoeff_[CO2index] = 0.0;
     }
 
-    forAll(JoCoeff_, i)
-    {
-        if (i == H2Oindex || i == CO2index)
-        {
-            Jo_co2_h2oCoeff_[i] = 0.0;
-        }
-        else
-        {
-            Jo_co2_h2oCoeff_[i] = JoCoeff_[i];
-        }
-    }
 }
 
 
@@ -382,7 +362,7 @@ void Foam::CCMUtilities<ThermoType>::initPvMinMaxSpan()
     }
 
     // Read pvInfo from dictionary
-    dictionary pvDict(CCMdict_.subDict("pvInfo"));
+    dictionary pvDict(CCMdict_.subOrEmptyDict("pvInfo"));
     forAll(regularVars_, ri)
     {
         word varName = regularVars_[ri];
