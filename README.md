@@ -1,175 +1,155 @@
-# Chemistry Coordinate Mapping (CCM) for OpenFOAM-13
+<h1 align="center">Chemistry Coordinate Mapping (CCM)</h1>
+<p align="center"><em>Bai's group, The Department of Energy Sciences, Lund University</em></p>
+<p align="center"><strong>✈️ Chemistry shouldn't be the bottleneck anymore.</strong></p>
 
 ## Overview
 
-**CCM (Chemistry Coordinate Mapping)** is an efficient chemistry acceleration method for OpenFOAM-13 that can **reduce computational costs by up to 10×** in reactive flow simulations. By grouping CFD cells with similar thermochemical states and sharing reaction rate calculations, CCM provides significant speedup while maintaining accuracy.
+**CCM (Chemistry Coordinate Mapping)** is an accurate and efficient chemistry acceleration method for several OpenFOAM Foundation versions. By grouping CFD cells with similar thermochemical states and sharing their reaction-rate calculations, CCM delivers substantial speedups while preserving accuracy. The latest implementation works directly on general reactive cases, keeping direct integration (DI) accuracy at roughly the cost of a cold-flow simulation.
 
-### 🚀 How CCM Works
+The reaction rates (RR) depend on the mixture composition (mass fractions $Y_i$ of the $i$-th species), temperature (T), and pressure (p). Simulation results improve, approaching the DI accuracy, as more of these variables are accounted for in CCM.
 
-CCM features an **adaptive error control (EC)** system that operates with minimal overhead while dynamically adjusting the grouping strategy to keep chemistry calculation errors within user-specified bounds. This approach helps ensure both improved performance and reliable solution quality. The theoretical foundation and implementation details are available in the author's [PhD Thesis](https://portal.research.lu.se/files/226878780/thesis_yuchen_no_signature.pdf). This version is currently the closest to the spirit of the [original paper](https://www.tandfonline.com/doi/epdf/10.1080/13647830.2012.713518?needAccess=true) in terms of implementation.
+<p align="center">
+  <img src="./figs/dist.png" width="800" alt="Nitric oxide (NO) distributions with an increasing number of CCM variables">
+</p>
+<p align="center"><em><strong>Figure 1.</strong> Nitric oxide (NO) distributions grow progressively closer to DI as more variables are included in CCM. Tested on LUMI with a 2D DNS case featuring dual-fuel combustion.</em></p>
 
-Our load balancing algorithms are specifically designed for the CCM method, working to distribute computational load effectively while reducing communication overhead in parallel computations.
+A key strength of CCM is that it stays efficient even after all dependent variables are included, thanks to several rounds of optimization. Combined with a [SIMD-optimized stiff solver](https://github.com/chizixin-688/FastChemistrySolver-OpenFOAM-10), chemistry is no longer the bottleneck: the chemistry step costs less than the flow-transport step.
 
-### ⚡ Updates for Existing CCM Users
+<p align="center">
+  <img src="./figs/timing.png" width="800" alt="Wall-clock time breakdown of the chemistry step versus the flow-transport step">
+</p>
+<p align="center"><em><strong>Figure 2.</strong> Wall-clock time breakdown: with all dependent variables active, the chemistry step costs less than the flow-transport step. Tested on LUMI with a 2D DNS case featuring dual-fuel combustion.</em></p>
 
-**This version introduces several important improvements** that enhance performance significantly:
+Additionally, it scales well to thousands of cores.
 
-🔥 **Complete species coverage** - Now supports all species in your kinetics mechanism  
-🔥 **Automatic configuration** - No need for manual min/max/span settings (handled automatically)  
-🔥 **Notable performance gains** - Substantially faster than previous versions
+<p align="center">
+  <img src="./figs/scaling.png" width="800" alt="Parallel scaling of CCM up to thousands of cores">
+</p>
+<p align="center"><em><strong>Figure 3.</strong> Parallel scaling of CCM up to thousands of cores, tested on Sandia Flame D.</em></p>
+
+### 📦 Supported Versions
+
+| OpenFOAM Version | Status | Notes |
+| --- | --- | --- |
+| **OpenFOAM-14** | ✅ Latest | Full feature set: SIMD-optimized ODE solver, MPHashTable, native MPI, and cellZone restriction |
+| **OpenFOAM-10** | ✅ Supported | Same feature set except for cellZone restriction |
+| **OpenFOAM-13** | 🗄️ Legacy | Reference only, in `OpenFOAM-13-legacy/`, no optimized ODE/nativeMPI/MPHashTable |
+
+The examples in this README target **OpenFOAM-14**. If you are running an earlier version, the configuration keywords are the same, but the solver name and a few dictionary details differ; refer to the ready-to-run tutorial in that version's directory (e.g. `OpenFOAM-10/Sandia/`).
 
 ## ✨ Key Features
 
-✅ **Adaptive Error Control**: Automatically keeps chemistry errors below user-defined threshold (1/nSlice)  
-✅ **Dynamic Variable Selection**: Adds or removes principal variables based on importance metrics during runtime  
-✅ **Strong Performance**: Typically achieves 2-10× speedup depending on mechanism complexity  
-✅ **Load Balancing**: Optimized communication patterns for parallel computing  
-✅ **Easy Integration**: Works smoothly with OpenFOAM-13's foamRun solver using multicomponentFluid module  
-✅ **Configurable Parameters**: Adjustable settings to balance accuracy and performance based on your needs
+✅ **Adaptive Error Control (EC)**: Automatically keeps chemistry errors below a user-defined threshold (1/nSlice), accounting for important species. It runs with minimal overhead, dynamically adjusting the grouping strategy to keep errors within user-specified bounds. Theory and implementation details are in the author's [PhD Thesis](https://portal.research.lu.se/files/226878780/thesis_yuchen_no_signature.pdf); this version is the closest in spirit to the [original paper](https://www.tandfonline.com/doi/epdf/10.1080/13647830.2012.713518?needAccess=true).  
+✅ **Strong Performance**: For most mechanisms (stiffness at or below GRI-Mech 3.0), chemistry takes less time than the flow solver.  
+✅ **Zero Configuration**: Sensible defaults out of the box: EC over all species + T/p, balancing accuracy and speed automatically.  
+✅ **SIMD-optimized ODE solver**: Integrates several [extremely efficient stiff solvers](https://github.com/chizixin-688/FastChemistrySolver-OpenFOAM-10) contributed by the community.  
+✅ **Load-balanced parallelism**: A dedicated load-balancing algorithm distributes the computational load while reducing communication overhead in parallel runs.  
+✅ **MPHashTable**: A memory-pool-backed hashtable that speeds up state storage and lookup.  
+✅ **Native MPI**: Inter-core communication uses native MPI calls directly, further cutting method overhead (supports OpenFOAM-10/14).  
+✅ **cellZone restriction**: Reaction rates can be integrated only inside a cell zone, which may be regenerated every chemistry step to track the flame. See [docs/cellZone.md](docs/cellZone.md).  
 
 
 ## 🔧 Compilation
 
 ### Prerequisites
 
-- OpenFOAM-13 properly installed and configured
+- An installed OpenFOAM Foundation version (14 recommended; 10 also supported)
 
 ### Build Instructions
 
-1. **Set up your OpenFOAM-13 environment**:
+We use OpenFOAM-14 as an example below; other versions are identical apart from the path.
+
+1. **Set up your OpenFOAM environment**:
    ```bash
-   source /path/to/OpenFOAM-13/etc/bashrc  # Update with your installation path
+   source /path/to/OpenFOAM-14/etc/bashrc  # Update with your installation path
    ```
 
 2. **Compile the CCM library**:
    ```bash
-   cd code/
+   cd OpenFOAM-14/code/
    wclean && wmake -j
    ```
 
-3. **Verify installation**:
-   ```bash
-   ls -la $FOAM_USER_LIBBIN/libCCM.so
-   ```
-   ✅ Success if `libCCM.so` appears in the output
+
 
 ## 🚀 Usage
 
-### Quick Start Guide
+### Quick Start Guide (OpenFOAM-14)
 
-1. **Prepare your case** - Two simple modifications:
-
-   **Add CCM library** to `<case>/system/controlDict`:
+1. **Load the CCM library** in `<case>/system/controlDict`:
    ```cpp
    libs ("libCCM.so");
    ```
 
-   **Enable CCM solver** in `<case>/constant/chemistryProperties`:
+2. **Select CCM** in `<case>/constant/chemistryProperties`:
    ```cpp
-   chemistry
-   {
-       solver ode;
-       method CCM;
-   }
-   ```
+   type            CCM;
+   chemistry       on;
 
-   **Configure CCM dictionary** in `<case>/constant/chemistryProperties`:
-   In most cases, a simple minimum setting is quite enough. With that, you automatically enjoy **Error Control** and consider **all species**, **T**, and **p** (if needed).
-   ```cpp
+   ode
+   {
+       solver          seulex;
+       absTol          1e-08;
+       relTol          0.1;
+   }
+
    CCM
    {
-      // Initialization mode (manual or default)
-      mode                 manual;  // Test default mode: auto-populate all species + T
-      nSlice                50;
-      ignoreMin            1e-6;
+       nSlice          50;
+       ignoreMin       1e-6;
+       optimizedODE    true;
    }
-   ```   
+   ```
+   This minimal `CCM` dictionary is enough for most cases: Error Control runs automatically over **all species** and **T** (and **p** when needed). For manual variable selection, adaptive EC, distributed communication, and other options see [configuration](docs/configuration.md).
 
-   More customized settings are also possible, please check the test case for details!
+   The above basic setting should work for most cases. The author recommends to check [configuration](docs/configuration.md) only when a big case utilizing thousands of cores is attempted.
 
-2. **Run your simulation**:
-
+3. **Run the simulation** with `foamRun` (set `solver multicomponentFluid;` in `controlDict`):
    ```bash
-   # Single processor execution
+   # Serial
    foamRun
 
-   # Parallel execution (example with 6 cores)
-   decomposePar -fileHandler collated
+   # Parallel (6 cores)
+   decomposePar -force -fileHandler collated
    mpirun -n 6 foamRun -parallel -fileHandler collated
    ```
 
-### 📊 Benchmark Test Case
+> **Earlier versions**: OpenFOAM-10 uses `chemistryType { solver ode; method CCM; }` instead of `type CCM;`, and the solver is `reactingFoam` rather than `foamRun`. The `CCM` dictionary is unchanged. If you attempt an earlier version, copy the settings from the ready-to-run tutorial in that version's directory (e.g. `OpenFOAM-10/Sandia/`).
 
-**Sandia Flame D** - Modified from the OpenFOAM tutorials for validation:
+### 📊 Test Cases
 
-```bash
-# Navigate to test case
-cd Sandia/  
+Two ready-to-run cases are included for validation and performance testing:
 
-# Run the benchmark
-foamRun
+- **Sandia Flame D**: a piloted methane/air jet flame RANS case adapted from the OpenFOAM tutorials, ideal for a quick accuracy check.
+- [**RCCI**](OpenFOAM-10/rcci) (only in OpenFOAM-10): a DNS case from [our paper](https://www.sciencedirect.com/science/article/pii/S1540748924004097), simplified by removing the diesel jet and coarsening the mesh. It runs in ~2 h on 6 cores (vs. ~12h for DI).
 
-# Or run in parallel for faster results
-decomposePar -force
-mpirun -n 6 foamRun -parallel -fileHandler collated
-```
 
-## ⚙️ Configuration Mastery
+## ⚙️ Advanced Configuration
 
-### Core Parameters - Simple Yet Powerful
+The minimal setup above is enough for most cases. For finer control:
 
-EC-CCM configuration boils down to two intuitive controls:
-
-#### 1. **`principalVars`** - Your accuracy knobs
-- Select which variables matter most for error control
-- Typically includes major species (H2, O2, CH4) and temperature
-- **Pro tip**: More variables = More groups (there will be a upper limit) = Smooth scales towards DI
-- **Be happy**: The program will tell you what variables are currently included. Unnecessary will be removed automatically with **ecMode** on
-
-#### 2. **`nSlice`** - Your precision dial
-- Controls maximum allowable error: `Error ≈ 1/nSlice`
-- Sweet spot: 25-100
-- **Rule of thumb**: Start with 50, adjust based on your accuracy needs
-
-### 🎯 Adaptive Error Control - Set It and Forget It
-
-The `ecMode` is where the magic happens - CCM automatically manages accuracy by dynamically adjusting its active variable list:
-
-```cpp
-ecMode
-{
-    enabled           true;    // Activate the autopilot
-    numECVarsToAdd    3;       // Add up to 3 variables when accuracy matters
-    numECVarsToRemove 1;       // Drop 1 variable when over-specified
-    updateFreq        5;       // Re-evaluate importance every 5 steps
-}
-```
-
-**What this means for you**: CCM continuously optimizes itself, adding critical variables when complexity increases and removing redundant ones when possible - all without your intervention!
+- **[docs/configuration.md](docs/configuration.md)**: the `mode`, `nSlice`, and `principalVars` parameters, adaptive error control (`ecMode`), and distributed-mode communication (`communicator`).
+- **[docs/cellZone.md](docs/cellZone.md)**: restricting chemistry integration to a dynamically regenerated cell zone (OpenFOAM-14).
 
 ## 🏆 Real-World Performance
 
-### RCCI Engine Simulation Results
+### RCCI-concept DNS Simulation Results
 
-In a challenging RCCI (Reactivity Controlled Compression Ignition) case with:
-- **45 principal variables (you don't need so many, it is a test for the code)** 
+A challenging RCCI (Reactivity Controlled Compression Ignition) case, run with:
+- **all principal variables** (far more than needed; a stress test for the code)
 - **nSlice = 50**
 
-The results speak for themselves:
+<img src="./figs/simulation_comparison.gif" width="900" alt="RCCI comparison: CCM vs DI">
 
-<img src="./simulation_comparison.gif" width="900" alt="RCCI comparison: CCM vs Direct Integration">
-
-**The verdict**: 
-- ✅ **Visually identical results** to direct integration (DI)
-- ✅ **4× faster** than traditional methods (even better than our published 2× improvement!)
-- ✅ **No observable differences** in any examined metrics
-
-*Can you spot the difference? Neither can we - and that's the point!*
+**Results**:
+- ✅ **Visually identical** to DI
+- ✅ **4× faster** than traditional methods (better than our published 2× improvement)
+- ✅ **No observable difference** in any of the examined metrics
 
 
 ## 📜 License
 
-GPL-3.0 License (same as OpenFOAM-13)
+GPL-3.0 License (same as OpenFOAM)
 
 Copyright (C) 2021 Shijie Xu, Shenghui Zhong  
 Copyright (C) 2025 Yuchen Zhou  
@@ -181,8 +161,46 @@ See [COPYING](COPYING) file for full license text.
 ## 📚 Citation
 
 If you use CCM in your research, please cite:
+
 ```bibtex
-[Citation to be added]
+@article{jangi2012multidimensional,
+  title={Multidimensional chemistry coordinate mapping approach for combustion modelling with finite-rate chemistry},
+  author={Jangi, Mehdi and Bai, Xue-Song},
+  journal={Combustion Theory and Modelling},
+  volume={16},
+  number={6},
+  pages={1109--1132},
+  year={2012},
+  publisher={Taylor \& Francis}
+}
+
+@article{zhou2025detailed,
+  title={Detailed numerical simulation of ammonia/diesel combustion under CI engine conditions},
+  author={Zhou, Yuchen},
+  year={2025}
+}
+
+@article{jangi2013development,
+  title={Development of chemistry coordinate mapping approach for turbulent partially premixed combustion},
+  author={Jangi, Mehdi and Yu, Rixin and Bai, Xue-Song},
+  journal={Flow, turbulence and combustion},
+  volume={90},
+  number={2},
+  pages={285--299},
+  year={2013},
+  publisher={Springer}
+}
+
+
+@inproceedings{vauquelin2025multidimensional,
+  title={Multidimensional chemistry coordinate mapping for large eddy simulations of a turbulent premixed bluff-body burner},
+  author={Vauquelin, Pierre and Zhou, Yuchen and {\AA}kerblom, Arvid and Fureby, Christer and Bai, Xue-Song},
+  booktitle={AIAA SCITECH 2025 Forum},
+  pages={2485},
+  year={2025}
+}
+
+
 ```
 
 ## 👤 Author

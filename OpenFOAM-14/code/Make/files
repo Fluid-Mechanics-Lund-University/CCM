@@ -1,0 +1,18 @@
+CCM/CCMChemistryModels.C
+
+src/ChemistryModel/basicFastChemistryModel/basicFastChemistryModel.C
+src/ChemistryModel/basicFastChemistryModel/basicFastChemistryModelNew.C
+
+src/ChemistryModel/fastChemistryModel/FastChemistryModel.C
+
+src/Reaction/OptReaction.C
+src/Reaction/Jacobian.C
+src/Reaction/ReactionRate.C
+src/Reaction/Tc.C
+
+src/ChemistryModel/odeChemistrySolvers.C
+
+src/dataBlock/dataBlock.C
+src/dataBlock/simpleDataBlock/simpleDataBlock.C
+
+LIB = $(FOAM_USER_LIBBIN)/libCCM

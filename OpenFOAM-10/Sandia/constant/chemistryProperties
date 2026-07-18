@@ -1,0 +1,116 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  7
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version         2;
+    format          ascii;
+    class           dictionary;
+    location        "constant";
+    object          chemistryProperties;
+}
+
+
+chemistryType
+{
+    solver          ode;
+    method          CCM;//clean; // chemistryModel (standard in OpenFOAM 7)
+}
+
+chemistry       on;
+
+log             off;
+
+initialChemicalTimeStep 1e-7;
+
+odeCoeffs
+{
+    solver          seulex;
+    absTol          1e-08;
+    relTol          0.1;
+}
+
+importantSpecies
+{
+    CO2             ;
+    H2O             ;
+    CH4             ;
+    O2              ;
+}
+
+CCM
+{
+    // Initialization mode (manual or default)
+    mode                 default;  // Test default mode: auto-populate all species + T
+    nSlice                50;
+    ignoreMin            1e-8;
+    optimizedODE         true;
+    disableFastChemAlloc false;
+
+    // // Advanced settings
+    // // For large cases utilizing thousands of cores, considering using distributed mode, 
+    // // and set the localCores to 128-1024
+    // communicator
+    // {
+    //     mode           global; // default to be global, could be distributed
+    //     localCores     256; 
+    //     redistributeEvery 20;
+    // }
+
+    // // Automatically adjust the number of EC variables during simulation, default to be true
+    // ecMode
+    // {
+    //     enabled         false;          // Enable EC mode, default to be true with default mode
+    //     numECVarsToAdd   3;            // Conservative: add 3 variables when update, default to be 3
+    //     numECVarsToRemove 1;           // Aggressive: remove 1 variables when update, default to be 1
+    //     updateFreq      5;             // Check every 5 steps, default to be 10
+    // }
+
+    // // Enable log-scale pressure for high Mach number cases (detonation/supersonic combustion), true for the default mode.
+    // // Note: no need to add p again to principalVars even if highMach is enabled
+    // highMach         false;         // Enable high Mach number treatment
+
+    // // More advanced control
+    // In manual mode, the user can specify the principalVars to be used in the simulation. 
+    // The principalVars can be any registered variables, such as Y, T, p, user-defined variables, even velocity although this makes no sense,
+    // Some popular derived variables such as chi, phieq, J (element mass fraction) have already been implemented.
+    // principalVars ("T" "CH3OH" "HO2" );
+
+    // ratioOxygenToCarbonElementInFuel 0;
+    // // You will use H atom to calculate J
+    // JElement        "h";
+    
+    // // You will use Jh to calculate 
+    // // the scalar dissipation rate '\chi'
+    // chiComponent    "Jh";// Jc, Jh, Jn, Jo
+
+    // // oldStyleChi = exp(-grad(phi)*grad(phi))
+    // // newStyleChi = 2D grad(Z)*grad(Z)
+    // oldStyleChi      false; 
+
+    // // oldStylePhi: equivalence ratio that will not change during the combustion process
+    // // newStylePhi: equivalence ratio that will change during the combustion process
+    // oldStylePhi      false;
+
+
+    // // deprecated usage: one can add detailed control on selected principal variables regarding their min/max/span values.
+    // pvInfo
+    // {
+    //     T         (300 2200   5);
+    //     CH3OH     (0    1.5e-4   1e-5);
+    //     HO2       (0    1.5e-4   1e-5);
+    // }
+
+
+    // // Timing analysis switch
+    // debugTime            true;  // true: enable detailed timing analysis for the major CCM steps 
+
+}
+
+#include "reactions";
+
+// ************************************************************************* //

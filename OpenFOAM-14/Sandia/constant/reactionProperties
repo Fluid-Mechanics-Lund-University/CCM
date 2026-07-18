@@ -1,0 +1,29 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  14
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      reactionProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// OF-14 renamed combustionProperties -> reactionProperties and
+// combustionModel -> reactionModel. If the file kept the old name the solver
+// would NOT error: it silently falls back to "noReaction" (chemistry source
+// terms switched off), so the rename is required.
+
+reactionModel   laminar;
+
+// EDC is the model used by the OF-14 SandiaD_LTS tutorial; kept here (unused
+// by "laminar") for reference:
+// reactionModel   EDC;
+// EDC { version v2005; }
+
+// ************************************************************************* //

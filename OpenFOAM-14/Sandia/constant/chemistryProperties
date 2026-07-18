@@ -1,0 +1,84 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  14
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format          ascii;
+    class           dictionary;
+    location        "constant";
+    object          chemistryProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+
+type            CCM;
+
+chemistry       on;
+
+initialChemicalTimeStep 1e-7;
+
+ode
+{
+    solver          seulex;
+    absTol          1e-08;
+    relTol          0.1;
+}
+
+CCM
+{
+    nSlice                50;
+    ignoreMin            1e-6;
+    optimizedODE         true;
+}
+// --- OF-14 feature: restrict where reaction rates (RR) are integrated ------
+// The standard chemistryModel holds a generatedCellZone and calls
+// zone_.regenerate() at the top of solve() every chemistry step. So a
+// field-based "coded" zone is re-evaluated each step and follows the solution.
+//
+// Template below: integrate chemistry ONLY in cells where T > 1500 K
+// (i.e. the burning region), RR = 0 elsewhere. The initial field here spans
+// 291-1880 K, so the zone is non-empty at t=0 and the flame stays lit.
+//
+// Alternatives:
+//   cellZone all;                              // whole domain (default)
+//   cellZone { type box; box (0 0 -1) (0.5 0.5 1); }   // static geometric box
+
+
+// cellZone
+// {
+//     type        coded;
+//     name        reactingZone;
+
+//     // Re-select the cells every evaluation so the zone tracks the flame
+//     regenerate  yes;
+
+//     code
+//     #{
+//         // Live temperature field from the object registry
+//         const volScalarField& T =
+//             mesh().lookupObject<volScalarField>("T");
+
+//         // Threshold: enable chemistry where T exceeds 1500 K
+//         const scalar Tact = 340;
+
+//         // Select the internal cells satisfying the criterion
+//         cellIndices = selectIndices
+//         (
+//             T,
+//             [&](const scalar Ti){ return Ti > Tact; }
+//         );
+//     #};
+// }
+
+// --- Optional OF-14 acceleration (formerly the separate "TDAC" method) -----
+// Mechanism reduction and ISAT tabulation are now sub-dicts of the standard
+// model. Uncomment to enable, or #includeEtc the shipped template:
+// #includeEtc "caseDicts/solvers/chemistry/TDAC/chemistryPropertiesFlame.cfg"
+
+#include "reactions";
+
+// ************************************************************************* //
