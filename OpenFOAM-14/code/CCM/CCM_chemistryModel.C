@@ -288,6 +288,12 @@ Foam::chemistryModels::CCM<ThermoType>::CCM
     currentStep_(0),
     initMode_(CCMdict_.lookupOrDefault<word>("mode", "default")),
     highMach_(CCMdict_.lookupOrDefault<Switch>("highMach", true)),
+    // NOTE: both default to ON so that a plain rebuild runs the density
+    // experiment with no case-dictionary changes. Set "diagThermoRho false;"
+    // (and "diagRhoReport false;") in the CCM sub-dictionary, or revert this
+    // commit, before using the library for anything but this experiment.
+    diagThermoRho_(CCMdict_.lookupOrDefault<Switch>("diagThermoRho", true)),
+    diagRhoReport_(CCMdict_.lookupOrDefault<Switch>("diagRhoReport", true)),
     optimizedODE_(CCMdict_.lookupOrDefault<Switch>("optimizedODE", false)),
     fastChemistryPtr_(
         CCMdict_.lookupOrDefault<Switch>("disableFastChemAlloc", false)
@@ -380,6 +386,17 @@ Foam::chemistryModels::CCM<ThermoType>::CCM
     if (highMach_)
     {
         Info << "Treating pressure variations in high Mach cases" << endl;
+    }
+
+    if (diagThermoRho_)
+    {
+        Info << "***********************************************************" << nl
+             << "*** DIAGNOSTIC BUILD -- NOT PRODUCTION                   ***" << nl
+             << "*** RR density factor is taken from the group's own      ***" << nl
+             << "*** (Y,T,p) instead of the looked-up \"rho\" field.        ***" << nl
+             << "*** Breaks mass consistency with ddt(rho,Yi).            ***" << nl
+             << "*** Disable with \"diagThermoRho false;\" in the CCM dict.  ***" << nl
+             << "***********************************************************" << endl;
     }
 
     if (optimizedODE_)
@@ -1726,6 +1743,31 @@ void Foam::chemistryModels::CCM<ThermoType>::distributeReactionEntry
     reactionEvaluationScope scope(*this);
     scalarField Y0(nSpecie_);
 
+    // Diagnostic: how far the looked-up "rho" is from the thermodynamic
+    // density. Non-zero means the two are different fields -- the lookup
+    // returns the solver's continuity density, whose scatter within a group
+    // sets the error floor this diagnostic is here to size.
+    if (diagRhoReport_)
+    {
+        tmp<volScalarField> tRhoThermo(this->thermo().rho());
+        const scalarField& rhoThermo = tRhoThermo().primitiveField();
+        const scalarField& rhoLookup = rho0vf.primitiveField();
+
+        scalar maxAbs = 0, maxRel = 0;
+        forAll(rhoLookup, celli)
+        {
+            const scalar d = mag(rhoLookup[celli] - rhoThermo[celli]);
+            maxAbs = max(maxAbs, d);
+            maxRel = max(maxRel, d/max(rhoThermo[celli], vSmall));
+        }
+        reduce(maxAbs, maxOp<scalar>());
+        reduce(maxRel, maxOp<scalar>());
+
+        Info<< "CCM density check: looked-up field \"" << rho0vf.name()
+            << "\" vs thermo.rho()  max|d| = " << maxAbs
+            << " kg/m^3,  max relative = " << maxRel << endl;
+    }
+
 
     // chemistryCpuTime.reset();
 
@@ -2270,8 +2312,25 @@ void Foam::chemistryModels::CCM<ThermoType>::updateReactionRate()
             scalar      T     = v.getT();
             scalar      p     = v.getP();
             scalar      deltaTChem = v.getDtChem();
-            const scalar rho  = v.getRho();
-            const scalar rho0 = v.getRho0();
+            scalar rho  = v.getRho();
+            scalar rho0 = v.getRho0();
+
+            // Diagnostic: replace the stored density with the mixture density
+            // implied by this group's own (Y, T, p). Same expression the ODE
+            // right-hand side uses (see derivatives()), so the factor becomes
+            // a pure function of the grouping variables and the group value
+            // converges to the cell value as the grouping is refined.
+            if (diagThermoRho_)
+            {
+                scalar rhoM = 0;
+                forAll(Y, i)
+                {
+                    rhoM += max(Y[i], scalar(0))/specieThermos_[i].rho(p, T);
+                }
+                rhoM = 1/rhoM;
+                rho  = rhoM;
+                rho0 = rhoM;
+            }
 
             scalarField cellRR = (this->*GetRRFunc_)
             (

@@ -309,6 +309,24 @@ class CCM
         //- Flag to treat pressure variations in high Mach cases
         Switch highMach_;
 
+        //- Diagnostic: derive the density used in the RR conversion from the
+        //  group's own (Y, T, p) instead of taking it from the looked-up
+        //  "rho" field. In OpenFOAM-11 and later the registered "rho" is the
+        //  solver's continuity density (thermo renames its own field out of
+        //  the way via renameRho), so it carries transport history and is not
+        //  a function of the grouping variables. When that density is shared
+        //  across a group it acts as a hidden variable and leaves an error
+        //  floor that refining the grouping cannot remove. Switching this on
+        //  makes the factor a pure function of (Y, T, p) so the floor, if it
+        //  is the cause, disappears. Diagnostic only: it breaks the mass
+        //  consistency with ddt(rho, Yi) that the continuity density gives,
+        //  so it is not the production fix.
+        Switch diagThermoRho_;
+
+        //- Diagnostic: report max|rho.oldTime() - thermo.rho()| each step, the
+        //  magnitude of the density discrepancy described above.
+        Switch diagRhoReport_;
+
         //- MPHashTable-backed grouping hashtables. All six are allocated
         //  once in the ctor body (sizes derived from nCells/nCores and a
         //  per-block byte estimate). Each step clears them (memory pool
