@@ -163,6 +163,24 @@ public:
 
                 if (used_ + bytes > size_)
                 {
+                    // size_ is a label: with an Int32 OpenFOAM the pool
+                    // cannot grow beyond 2^31 bytes
+                    if
+                    (
+                        int64_t(size_) + int64_t(enlargeUnit_)
+                      > int64_t(labelMax)
+                    )
+                    {
+                        FatalErrorInFunction
+                            << "Cannot enlarge memory pool of " << size_
+                            << " bytes by " << enlargeUnit_ << " bytes:"
+                            << " the size exceeds labelMax = " << labelMax
+                            << " (WM_LABEL_SIZE = " << WM_LABEL_SIZE << ")."
+                            << nl << "Use an OpenFOAM compiled with"
+                            << " WM_LABEL_SIZE=64 (Int64) and recompile CCM,"
+                            << " or run on more cores." << exit(FatalError);
+                    }
+
                     Info<< "Enlarging memory pool from " << size_
                         << " to " << size_ + enlargeUnit_ << endl;
 

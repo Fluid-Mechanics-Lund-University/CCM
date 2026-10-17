@@ -38,6 +38,44 @@ static inline Foam::label ccmNextPow2(Foam::label n)
     return p;
 }
 
+// Byte count a*b that must fit in a label (MemoryPool sizes and the key
+// arena are labels). With an Int32 OpenFOAM this overflows above 2^31 bytes,
+// e.g. a serial run of 2M cells x 69 species.
+static inline Foam::label ccmLabelBytes
+(
+    Foam::label a,
+    Foam::label b,
+    const char* what
+)
+{
+    const int64_t n = int64_t(a)*int64_t(b);
+    if (n > int64_t(Foam::labelMax))
+    {
+        FatalErrorInFunction
+            << what << " needs " << a << " x " << b << " = " << n
+            << " bytes, more than labelMax = " << Foam::labelMax
+            << " (WM_LABEL_SIZE = " << WM_LABEL_SIZE << ")." << Foam::nl
+            << "Use an OpenFOAM compiled with WM_LABEL_SIZE=64 (Int64) and"
+            << " recompile CCM, or run on more cores."
+            << Foam::exit(Foam::FatalError);
+    }
+    return Foam::label(n);
+}
+
+// MPI counts are int. poolUsed() is a label, so with an Int64 OpenFOAM a
+// pool above 2^31 bytes would be silently truncated by int().
+static inline int ccmMpiBytes(Foam::label bytes)
+{
+    if (int64_t(bytes) > int64_t(INT_MAX))
+    {
+        FatalErrorInFunction
+            << "Pool of " << bytes << " bytes exceeds the MPI int limit "
+            << INT_MAX << ". Run on more cores to reduce the data per rank."
+            << Foam::exit(Foam::FatalError);
+    }
+    return int(bytes);
+}
+
 // Loose elementwise comparison used by Phase 1+ FatalError validators.
 static inline bool ccmNearlyEq(Foam::scalar a, Foam::scalar b, Foam::scalar tol = 1e-10)
 {
@@ -295,28 +333,12 @@ Foam::chemistryModels::CCM<ThermoType>::CCM
       : basicFastChemistryModel::New(mesh())
     )
 {
-
-    // Create the fields for the chemistry sources
-    forAll(RR_, fieldi)
-    {
-        RR_.set
-        (
-            fieldi,
-            new volScalarField::Internal
-            (
-                IOobject
-                (
-                    "RR." + Yvf_[fieldi].name(),
-                    this->mesh().time().name(),
-                    this->mesh(),
-                    IOobject::NO_READ,
-                    IOobject::NO_WRITE
-                ),
-                thermo.mesh(),
-                dimensionedScalar(dimMass/dimVolume/dimTime, 0)
-            )
-        );
-    }
+    // RR_ is created once, further below. Do not create it here as well:
+    // a second set() with the same names fails to register the new fields
+    // in the objectRegistry (the old ones still hold the names) and then
+    // deletes the old ones, leaving RR_ unregistered. Unregistered fields
+    // are not mapped by meshToMesh, so RR_ keeps the old mesh size after
+    // a topology change and Rate_Assignment writes past its end.
 
     Info<< "chemistryModel: Number of species = " << nSpecie_
         << " and reactions = " << nReaction() << endl;
@@ -545,19 +567,29 @@ Foam::chemistryModels::CCM<ThermoType>::CCM
         const Foam::label nbPer = ccmNextPow2(per);
         const Foam::label nbAll = ccmNextPow2(max(nL, Foam::label(1)));
 
+        // Pool sizes are labels: check them before they overflow
+        const Foam::label perPoolTC =
+            ccmLabelBytes(per, perBlockTC, "Per-core TCEntry pool");
+        const Foam::label perPoolRR =
+            ccmLabelBytes(per, perBlockRR, "Per-core rateEntry pool");
+        const Foam::label allPoolTC =
+            ccmLabelBytes(nL, perBlockTC, "Whole-mesh TCEntry pool");
+        const Foam::label allPoolRR =
+            ccmLabelBytes(nL, perBlockRR, "Whole-mesh rateEntry pool");
+
         mpToCore_.resize(N);
         mpFromCore_.resize(N);
         mpReturnToCore_.resize(N);
         mpReceivedRR_.resize(N);
         for (Foam::label i = 0; i < N; ++i)
         {
-            mpToCore_.set     (i, new MPHashTable(nbPer, per * perBlockTC));
-            mpFromCore_.set   (i, new MPHashTable(nbPer, per * perBlockTC));
-            mpReturnToCore_.set(i, new MPHashTable(nbPer, per * perBlockRR));
-            mpReceivedRR_.set  (i, new MPHashTable(nbPer, per * perBlockRR));
+            mpToCore_.set     (i, new MPHashTable(nbPer, perPoolTC));
+            mpFromCore_.set   (i, new MPHashTable(nbPer, perPoolTC));
+            mpReturnToCore_.set(i, new MPHashTable(nbPer, perPoolRR));
+            mpReceivedRR_.set  (i, new MPHashTable(nbPer, perPoolRR));
         }
-        mpGathered_.set(new MPHashTable(nbAll, nL * perBlockTC));
-        mpLocalRR_.set (new MPHashTable(nbAll, nL * perBlockRR));
+        mpGathered_.set(new MPHashTable(nbAll, allPoolTC));
+        mpLocalRR_.set (new MPHashTable(nbAll, allPoolRR));
 
         // Send / recv staging buffers. Strict upper bound on per-rank
         // outgoing bytes is nL * perBlockTC (degenerate case: every cell
@@ -1598,6 +1630,26 @@ void Foam::chemistryModels::CCM<ThermoType>::mpAlltoallvBytes
                      chemComm_);
 
         // Prefix-sum to per-peer offsets into mpSendBuf_/mpRecvBuf_.
+        // MPI_Alltoallv takes int counts/displacements: the per-rank
+        // totals must stay below 2^31 bytes regardless of WM_LABEL_SIZE.
+        {
+            int64_t s64 = 0, r64 = 0;
+            for (int p = 0; p < N; ++p)
+            {
+                s64 += sb[p];
+                r64 += rb[p];
+            }
+            if (s64 > INT_MAX || r64 > INT_MAX)
+            {
+                FatalErrorInFunction
+                    << "mpAlltoallvBytes: per-rank exchange of " << s64
+                    << " bytes sent / " << r64 << " bytes received exceeds"
+                    << " the MPI int limit " << INT_MAX << "." << nl
+                    << "Run on more cores to reduce the data per rank."
+                    << exit(FatalError);
+            }
+        }
+
         std::vector<int> sd(N, 0), rd(N, 0);
         int sTot = 0, rTot = 0;
         for (int p = 0; p < N; ++p)
@@ -1797,7 +1849,8 @@ void Foam::chemistryModels::CCM<ThermoType>::distributeReactionEntry
     // bytes); every cell's key lives at celli*keyStride_ so no per-cell
     // offset table is needed. setSize only reallocates when nEnc grows.
     keyStride_ = nEnc * 2 + 2;
-    const label arenaNeed = nGroupCells * keyStride_;
+    const label arenaNeed =
+        ccmLabelBytes(nGroupCells, keyStride_, "Zone-key arena");
     if (keyArena_.size() < arenaNeed)
     {
         keyArena_.setSize(arenaNeed);
@@ -2112,7 +2165,7 @@ void Foam::chemistryModels::CCM<ThermoType>::distributeReactionEntry
         for (int peer = 0; peer < numPeers; ++peer)
         {
             sendPoolPtrs   [peer] = mpToCore_[peer].poolStart();
-            sendByteCounts [peer] = int(mpToCore_[peer].poolUsed());
+            sendByteCounts [peer] = ccmMpiBytes(mpToCore_[peer].poolUsed());
             sendEntryCounts[peer] = int(mpToCore_[peer].nEntries());
         }
 
@@ -2353,7 +2406,7 @@ void Foam::chemistryModels::CCM<ThermoType>::distributeReactionRate()
         for (label peer = 0; peer < numPeers; ++peer)
         {
             sendPoolPtrs   [peer] = mpReturnToCore_[peer].poolStart();
-            sendByteCounts [peer] = int(mpReturnToCore_[peer].poolUsed());
+            sendByteCounts [peer] = ccmMpiBytes(mpReturnToCore_[peer].poolUsed());
             sendEntryCounts[peer] = int(mpReturnToCore_[peer].nEntries());
         }
 
@@ -2499,6 +2552,29 @@ void Foam::chemistryModels::CCM<ThermoType>::updateCCM4MeshChange()
             keyLen_.setSize(nCells);
             zoneRemainder_.setSize(nCells);
             zoneHash_.setSize(nCells);
+
+            // The staging buffers are bounded by nCells*perBlockTC
+            const size_t bufBytes =
+                size_t(nCells)*size_t(18*nSpecie_ + 120);
+            if (mpSendBuf_.size() < bufBytes)
+            {
+                mpSendBuf_.assign(bufBytes, 0);
+                mpRecvBuf_.assign(bufBytes, 0);
+            }
+        }
+
+        // RR_ must follow the mesh (it is mapped by the topo-changer
+        // because it is registered). Fail loudly instead of corrupting
+        // memory in Rate_Assignment if it does not.
+        forAll(RR_, i)
+        {
+            if (RR_[i].size() != nCells)
+            {
+                FatalErrorInFunction
+                    << "RR field " << RR_[i].name() << " has size "
+                    << RR_[i].size() << " but the mesh has " << nCells
+                    << " cells after a mesh change" << exit(FatalError);
+            }
         }
     }
 }
